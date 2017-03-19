@@ -1,0 +1,285 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "This template defines 2 EC2 instances, ELB, and R53 alias record."
+Parameters: 
+  Environment:
+    Description: "The environment that this will belong to."
+    Type: String
+    AllowedValues:
+     - dev
+     - prod
+  EC2InstanceName1: 
+    Description: "Specify a server name for the first EC2 instance."
+    MaxLength: "15"
+    MinLength: "5"
+    Type: String
+  EC2InstanceName2: 
+    Description: "Specify a server name for the second EC2 instance."
+    MaxLength: "15"
+    MinLength: "5"
+    Type: String
+  InstanceType: 
+    ConstraintDescription: "Must be a valid EC2 instance type."
+    Default: t2.medium
+    Description: "Amazon EC2 instance type"
+    Type: String  
+  ImageId:
+    Description: "The AMI ID to be used by EC2 instances"
+    Type: String
+    Default: ami-b47175d7
+Mappings: 
+  EnvMap: 
+    prod:
+      VpcId: vpc-00000001
+      Project: test-project
+      Team: test-team
+      ServiceName: test-servcice
+      DetailedMonitoring: true
+      KeyName: prod-key
+      EC2AppSubnetA: subnet-00000001
+      EC2AppSubnetB: subnet-00000002
+      DNSInternalHostedZoneName: example.com.
+      Sourcesubnet1: 10.0.0.1/24
+      Sourcesubnet2: 10.0.0.2/24
+      ELBAccessLogsS3BucketName: test-elb-access-logs
+      BaseEC2SG: sg-00000001
+      CPUAlarmPeriod: 60
+      AlarmActions: arn:aws:sns:ap-southeast-2:000000000001:Email
+    dev:
+      VpcId: vpc-00000002
+      Project: test-project
+      Team: test-team
+      ServiceName: test-service
+      DetailedMonitoring: false
+      KeyName: dev-key
+      EC2AppSubnetA: subnet-00000003
+      EC2AppSubnetB: subnet-00000004
+      DNSInternalHostedZoneName: example.com.
+      Sourcesubnet1: 10.0.0.3/24
+      Sourcesubnet2: 10.0.0.4/24
+      ELBAccessLogsS3BucketName: test-elb-access-logs
+      BaseEC2SG: sg-00000002
+      CPUAlarmPeriod: 300
+      AlarmActions: arn:aws:sns:ap-southeast-2:000000000001:Email
+Resources:
+  EC2SecurityGroup: 
+   Type: "AWS::EC2::SecurityGroup"
+   Properties: 
+     GroupDescription: "Enable access from web servers"
+     SecurityGroupIngress: 
+     -  CidrIp: !FindInMap [EnvMap, !Ref Environment, Sourcesubnet1]
+        FromPort: "80"
+        IpProtocol: tcp
+        ToPort: "80"
+     -  CidrIp: !FindInMap [EnvMap, !Ref Environment, Sourcesubnet2]
+        FromPort: "80"
+        IpProtocol: tcp
+        ToPort: "80"
+     -  SourceSecurityGroupId: !Ref ELBSecurityGroup
+        FromPort: "80"
+        IpProtocol: tcp
+        ToPort: "80"
+     VpcId: !FindInMap [EnvMap, !Ref Environment, VpcId]
+     Tags: 
+        - Key: Project
+          Value: !FindInMap [EnvMap, !Ref Environment, Project]
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Team
+          Value: !FindInMap [EnvMap, !Ref Environment, Team]
+  ELBSecurityGroup: 
+   Type: "AWS::EC2::SecurityGroup"
+   Properties: 
+     GroupDescription: "Enable access from web servers"
+     SecurityGroupIngress: 
+     -  CidrIp: !FindInMap [EnvMap, !Ref Environment, Sourcesubnet1]
+        FromPort: "80"
+        IpProtocol: tcp
+        ToPort: "80"
+     -  CidrIp: !FindInMap [EnvMap, !Ref Environment, Sourcesubnet2]
+        FromPort: "80"
+        IpProtocol: tcp
+        ToPort: "80"
+     VpcId: !FindInMap [EnvMap, !Ref Environment, VpcId]
+     Tags: 
+        - Key: Project
+          Value: !FindInMap [EnvMap, !Ref Environment, Project]
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Team
+          Value: !FindInMap [EnvMap, !Ref Environment, Team]
+  EC2Instance1: 
+    Type: "AWS::EC2::Instance"
+    Properties: 
+      ImageId: !Ref ImageId
+      InstanceType: !Ref InstanceType
+      KeyName: !FindInMap [EnvMap, !Ref Environment, KeyName]
+      Monitoring: !FindInMap [EnvMap, !Ref Environment, DetailedMonitoring]
+      SecurityGroupIds: 
+        - !Ref EC2SecurityGroup
+        - !FindInMap [EnvMap, !Ref Environment, BaseEC2SG]
+      SubnetId: !FindInMap [EnvMap, !Ref Environment, EC2AppSubnetA]
+      Tags: 
+        - Key: Name
+          Value: !Ref EC2InstanceName1
+        - Key: Project
+          Value: !FindInMap [EnvMap, !Ref Environment, Project]
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Team
+          Value: !FindInMap [EnvMap, !Ref Environment, Team]
+  EC2Instance2: 
+    Type: "AWS::EC2::Instance"
+    Properties: 
+      ImageId: !Ref ImageId
+      InstanceType: !Ref InstanceType
+      KeyName: !FindInMap [EnvMap, !Ref Environment, KeyName]
+      Monitoring: !FindInMap [EnvMap, !Ref Environment, DetailedMonitoring]
+      SecurityGroupIds: 
+        - !Ref EC2SecurityGroup
+        - !FindInMap [EnvMap, !Ref Environment, BaseEC2SG]
+      SubnetId: !FindInMap [EnvMap, !Ref Environment, EC2AppSubnetB]
+      Tags: 
+        - Key: Name
+          Value: !Ref EC2InstanceName2
+        - Key: Project
+          Value: !FindInMap [EnvMap, !Ref Environment, Project]
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Team
+          Value: !FindInMap [EnvMap, !Ref Environment, Team]
+  ServerELB:
+    Type: "AWS::ElasticLoadBalancing::LoadBalancer"
+    Properties:
+      AccessLoggingPolicy:
+        S3BucketName:
+         !FindInMap [EnvMap, !Ref Environment, ELBAccessLogsS3BucketName]
+        S3BucketPrefix: !Ref Environment
+        Enabled: 'true'
+        EmitInterval: '60'
+      ConnectionDrainingPolicy:
+        Enabled: 'true'
+        Timeout: '60'
+      ConnectionSettings:
+        IdleTimeout: '60'
+      CrossZone: True
+      HealthCheck:
+        HealthyThreshold: 3
+        Interval: 30
+        Target: HTTP:80/status
+        Timeout: 3
+        UnhealthyThreshold: 2
+      Instances:
+        - !Ref EC2Instance1
+        - !Ref EC2Instance2
+      LoadBalancerName: !Join ['', [!FindInMap [EnvMap, !Ref Environment, ServiceName], -,!Ref Environment]]
+      Scheme: internal
+      Listeners: 
+      - LoadBalancerPort: '80'
+        InstancePort: '80'
+        Protocol: HTTP
+      SecurityGroups: [!GetAtt ELBSecurityGroup.GroupId]
+      Subnets:
+        - !FindInMap [EnvMap, !Ref Environment, EC2AppSubnetA]
+        - !FindInMap [EnvMap, !Ref Environment, EC2AppSubnetB]
+      Tags: 
+        - Key: Name
+          Value: !Join ['', [!FindInMap [EnvMap, !Ref Environment, DNSRecordSetServiceNameInternal], -,!Ref Environment]]
+        - Key: Project
+          Value: !FindInMap [EnvMap, !Ref Environment, Project]
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Team
+          Value: !FindInMap [EnvMap, !Ref Environment, Team]
+  DNSRecord:
+    Type: "AWS::Route53::RecordSetGroup"
+    Properties:
+     RecordSets:
+       - Name: !Join ['', [!FindInMap [EnvMap, !Ref Environment, ServiceName], ., !FindInMap [EnvMap, !Ref Environment, DNSInternalHostedZoneName]]]
+         Type: A
+         AliasTarget:
+           HostedZoneId: !GetAtt ServerELB.CanonicalHostedZoneNameID
+           DNSName: !GetAtt ServerELB.DNSName
+     Comment: DNS name for service
+     HostedZoneName: !FindInMap [EnvMap, !Ref Environment, DNSInternalHostedZoneName]
+  CPUCriticalAlarm1:
+    Type: "AWS::CloudWatch::Alarm"
+    Properties:
+      AlarmName: 
+         Fn::Join: 
+            - ""
+            - - "CRITICAL: "
+              - !FindInMap [EnvMap, !Ref Environment, Project]
+              - !Ref Environment
+              - " CPU Usage "
+              - !Ref EC2Instance1
+      ActionsEnabled: true
+      AlarmActions: [!FindInMap [EnvMap, !Ref Environment, AlarmActions]]
+      AlarmDescription: High CPU alarm
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: !FindInMap [EnvMap, !Ref Environment, CPUAlarmPeriod]
+      EvaluationPeriods: 3
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions: 
+        - Name: InstanceId
+          Value: !Ref EC2Instance1
+  CPUCriticalAlarm2:
+    Type: "AWS::CloudWatch::Alarm"
+    Properties:
+      AlarmName: 
+         Fn::Join: 
+            - ""
+            - - "CRITICAL: "
+              - !FindInMap [EnvMap, !Ref Environment, Project]
+              - !Ref Environment
+              - " CPU Usage "
+              - !Ref EC2Instance2
+      ActionsEnabled: true
+      AlarmActions: [!FindInMap [EnvMap, !Ref Environment, AlarmActions]]
+      AlarmDescription: High CPU alarm
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: !FindInMap [EnvMap, !Ref Environment, CPUAlarmPeriod]
+      EvaluationPeriods: 3
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: InstanceId
+          Value: EC2Instance2
+  ELBCriticalAlarm:
+    Type: "AWS::CloudWatch::Alarm"
+    Properties:
+      AlarmName: 
+         Fn::Join: 
+            - ""
+            - - "CRITICAL: "
+              - !FindInMap [EnvMap, !Ref Environment, Project]
+              - !Ref Environment
+              - " ELB Cluster Status "
+              - !Ref ServerELB
+      ActionsEnabled: true
+      AlarmActions: [!FindInMap [EnvMap, !Ref Environment, AlarmActions]]
+      AlarmDescription: Less than 2 pool members
+      MetricName: HealthyHostCount
+      Namespace: AWS/ELB
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: LessThanOrEqualToThreshold
+      Dimensions:
+        - Name: LoadBalancerName
+          Value: !Ref ServerELB
+Outputs:
+  EC2PrivateIPAddress1:
+    Description: The IP address of the EC2 server
+    Value: !GetAtt EC2Instance1.PrivateIp
+  EC2PrivateIPAddress2:
+    Description: The IP address of the EC2 server
+    Value: !GetAtt EC2Instance2.PrivateIp
+  ServiceDNSNAme:
+    Description: The hostname of the service
+    Value: !Ref ServerELB
